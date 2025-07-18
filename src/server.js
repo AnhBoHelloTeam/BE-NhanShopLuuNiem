@@ -65,9 +65,21 @@ socketHandler(io);
 
 // Middleware
 app.use(helmet());
+const allowedOrigins = [
+  'http://localhost:5173',
+  'http://localhost:5174',
+  'https://fe-webdoluuniem.onrender.com'
+];
+
 app.use(cors({
-  origin: 'http://localhost:5173', // Cho phép Vite frontend
-  credentials: true,               // Nếu frontend gửi cookie hoặc token
+  origin: function (origin, callback) {
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS: ' + origin));
+    }
+  },
+  credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
   exposedHeaders: ['Content-Disposition']
