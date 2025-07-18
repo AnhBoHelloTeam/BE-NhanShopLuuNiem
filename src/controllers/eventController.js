@@ -46,7 +46,6 @@ const createEvent = async (req, res) => {
 
 const getAllEvents = async (req, res) => {
   try {
-    // KHÔNG dùng .lean() trước populate lồng
     const events = await Event.find()
        .populate({
         path: 'products',
