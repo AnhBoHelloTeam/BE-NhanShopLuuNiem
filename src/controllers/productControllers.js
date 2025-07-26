@@ -1,4 +1,5 @@
 const Product = require('../models/Product.js');
+const ApplicableProduct = require('../models/ApplicableProduct');
 const Images = require('../models/Image.js');
 const LikeList = require('../models/LikeList.js');
 const Categories = require('../models/Category.js');
@@ -9,6 +10,7 @@ const client = require('../config/meiliSearchConfig'); // Import the MeiliSearch
 
 const createProduct = async (req, res) => {
   try {
+    console.log('📥 Đã nhận file:', req.files); 
     logger.info('Creating product with data:', req.body);
 
     const { name, price, categories, description, discount, quantity, images } = req.body;
@@ -40,7 +42,7 @@ const createProduct = async (req, res) => {
       const uploadedImages = await Promise.all(
         req.files.map(async (file) => {
           const img = await Images.create({
-            image: `/src/assets/images/${file.filename}`,
+            image: `/uploads/products/${file.filename}`,
             Product: newProduct._id,
           });
           return img._id;
@@ -100,71 +102,143 @@ const getAllProducts = async (req, res) => {
             message: e.message 
         })
     }
-}
+};
 
 const getProductById = async (req, res) => {
-    try {
-        logger.info(`Fetching product with ID: ${req.params.id}`);
-        if (!req.params.id) {
-            logger.warn('Product ID is required');
-            return res.status(400).json({
-                success: false,
-                message: 'please provide product ID to get product details'
-            });
-        }
+  try {
+    const productId = req.params.id;
+    logger.info(`Fetching product with ID: ${productId}`);
 
-        const product = await Product.findById(req.params.id).populate('images').populate('categories');
-        if (!product) {
-            return res.status(500).json({
-                success: false,
-                message: 'product not found'
-            });
-        } 
-        
-        logger.info(`Product retrieved successfully: ${product._id}`);
-        res.json(product);
-    } catch (e) {
-        logger.error(`Error fetching product: ${e.message}`);
-        res.status(500).json({
-            success: false,
-            message: e.message
-        });
+    if (!productId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Vui lòng cung cấp ID sản phẩm.',
+      });
     }
-}
+
+    const product = await Product.findById(productId)
+      .populate('images')
+      .populate('categories');
+
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        message: 'Không tìm thấy sản phẩm',
+      });
+    }
+
+    const now = new Date();
+
+    const applicableEvent = await ApplicableProduct.findOne({
+      productId: product._id,
+      startDate: { $lte: now },
+      endDate: { $gte: now },
+    });
+
+console.log("Kết quả applicableEvent:", applicableEvent);
+
+    const eventDiscount = applicableEvent ? parseInt(applicableEvent.discount) : 0;
+    const isInEvent = !!applicableEvent;
+    logger.info(`Product retrieved successfully: ${product._id}`);
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        ...product._doc,
+        eventDiscount,
+        isInEvent,
+      },
+    });
+  } catch (error) {
+    logger.error(`Error fetching product: ${error.message}`);
+    return res.status(500).json({
+      success: false,
+      message: 'Lỗi server khi lấy thông tin sản phẩm',
+    });
+  }
+};
 
 const updateProduct = async (req, res) => {
-    try {
-        logger.info(`Updating product with ID: ${req.params.id}`);
-        if (!req.params.id) {
-            logger.warn('Product ID is required for update');
-            return res.status(400).json({
-                success: false,
-                message: 'please provide product ID to update product details'
-            });
+  try {
+    const productId = req.params.id;
+    const {
+      name,
+      description,
+      price,
+      quantity,
+      discount,
+      category,
+    } = req.body;
+
+    // 1️⃣ Tìm sản phẩm
+    const product = await Product.findById(productId);
+    if (!product) return res.status(404).json({ message: 'Product not found' });
+
+    // 2️⃣ Ảnh “giữ lại” do client gửi về dưới key 'images'
+    let imageLinks = [];
+    if (req.body.images) {
+      // Nếu nó là JSON string của 1 array
+      let sent = req.body.images;
+      if (typeof sent === 'string' && sent.trim().startsWith('[')) {
+        try {
+          sent = JSON.parse(sent);
+        } catch (e) {
+          // nếu JSON.parse fail, giữ nguyên sent
         }
-
-        logger.info('Update data:', req.body);
-        const product = await Product.findByIdAndUpdate(
-            req.params.id, 
-            req.body,
-            {new: true}
-        );  
-
-        if (!product) return res.status(404).json({
-            success: false,
-            message: 'product not found'
-        });
-
-        logger.info(`Product updated successfully: ${product._id}`);
-        res.json(product);
-    } catch (e) {  
-        logger.error(`Error updating product: ${e.message}`);
-        res.status(500).json({
-            success: false,
-            message: e.message
-        });
+      }
+      // Bây giờ sent là array hoặc string
+      const arr = Array.isArray(sent) ? sent : [sent];
+      for (const link of arr) {
+        if (typeof link !== 'string') continue;
+        // Nếu link trỏ tới file cũ hoặc URL
+        // tìm doc đã có
+        let imgDoc = await Images.findOne({ image: link });
+        if (!imgDoc) {
+          imgDoc = new Images({ image: link });
+          await imgDoc.save();
+        }
+        imageLinks.push(imgDoc._id);
+      }
     }
-}
+
+    // 3️⃣ Ảnh mới upload
+    let uploadedFiles = [];
+    if (req.files && req.files.length > 0) {
+      for (const file of req.files) {
+        const imgDoc = new Images({ image: `/uploads/products/${file.filename}` });
+        await imgDoc.save();
+        uploadedFiles.push(imgDoc._id);
+      }
+    }
+
+    // 4️⃣ Gộp **chính mảng client gửi** (ảnh cũ giữ lại) + **ảnh mới**
+    const finalImages = [...imageLinks, ...uploadedFiles];
+
+    // 5️⃣ Cập nhật và ghi đè mảng cũ
+    const updated = await Product.findByIdAndUpdate(
+      productId,
+      {
+        name,
+        description,
+        price,
+        quantity,
+        discount,
+        category,
+        images: finalImages,
+      },
+      { new: true }
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: 'Cập nhật sản phẩm thành công',
+      data: updated,
+    });
+  } catch (err) {
+    console.error('Error updating product:', err);
+    return res.status(500).json({ message: 'Lỗi khi cập nhật sản phẩm' });
+  }
+};
 
 const deleteProduct = async (req, res) => {
     try {
