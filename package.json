@@ -29,14 +29,8 @@
     "swiper": "^11.2.10"
   },
   "devDependencies": {
-    "argon2": "^0.43.0",
     "axios": "^1.10.0",
-    "crypto": "^1.0.1",
-    "joi": "^17.13.3",
-    "meilisearch": "^0.51.0",
     "multer": "^2.0.1",
-    "nodemon": "^3.1.10",
-    "socket.io": "^4.8.1",
-    "winston": "^3.17.0"
+    "nodemon": "^3.1.10"
   }
 }
